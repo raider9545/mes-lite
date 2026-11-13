@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>생산·공정 및 재고 관리 시스템 (MES Lite)</title>
+  <script src="https://tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif; }
+    .pivot-table th, .pivot-table td { white-space: nowrap; }
+    /* 스크롤바 커스텀 */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+  <!-- 상단 헤더 -->
+  <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+    <div class="max-w-[1600px] mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-lg">M</div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight">생산·공정 및 이월재고 관리 시스템</h1>
+          <p class="text-xs text-slate-400">PC 웹 입력 · 실시간 목표 달성률 · 전월 이월 재고 자동 차감</p>
+        </div>
+      </div>
+
+      <!-- 글로벌 필터 & 백업 버튼 -->
+      <div class="flex items-center gap-3">
+        <div class="flex items-center bg-slate-800 rounded-lg px-3 py-1.5 border border-slate-700">
+          <label class="text-xs text-slate-400 mr-2">조회 연월:</label>
+          <input type="month" id="filterMonth" value="2026-11" class="bg-transparent text-sm font-semibold text-white focus:outline-none" />
+        </div>
+
+        <div class="flex items-center bg-slate-800 rounded-lg px-3 py-1.5 border border-slate-700">
+          <label class="text-xs text-slate-400 mr-2">고객사:</label>
+          <select id="filterCustomer" class="bg-transparent text-sm font-semibold text-white focus:outline-none">
+            <option value="ALL" class="text-slate-900">전체 고객사</option>
+          </select>
+        </div>
+
+        <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">
+          CSV 다운로드
+        </button>
+        <label class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition">
+          CSV 불러오기
+          <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="importCSV(event)" />
+        </label>
+        <button onclick="resetDemoData()" class="bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs px-2.5 py-2 rounded-lg transition" title="초기 샘플 데이터로 복원">
+          초기화
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+
+    <!-- 1. PC 빠른 실적 입력 폼 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-bold text-slate-700 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+          작업 실적 빠른 입력 (Enter 키로 연속 등록 가능)
+        </h2>
+        <span class="text-xs text-slate-400">* 고객사를 선택하면 해당 품명 목록이 자동으로 바뀝니다.</span>
+      </div>
+
+      <form id="entryForm" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">작업일</label>
+          <input type="date" id="inDate" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">고객사</label>
+          <select id="inCustomer" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></select>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">품명 (PARTNAME)</label>
+          <select id="inPart" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></select>
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">공정 단계</label>
+          <select id="inProcess" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <option value="1.목표">1.목표</option>
+            <option value="2.생산" selected>2.생산</option>
+            <option value="3.후가공">3.후가공</option>
+            <option value="4.컷팅">4.컷팅</option>
+            <option value="5.검수">5.검수</option>
+            <option value="6.포장">6.포장</option>
+            <option value="7.납품">7.납품</option>
+            <option value="8.컷팅">8.컷팅</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-1">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">수량</label>
+          <input type="number" id="inQty" required min="1" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-right font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </div>
+
+        <div class="md:col-span-1">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">비고</label>
+          <input type="text" id="inNote" placeholder="이월 등" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </div>
+
+        <div class="md:col-span-1">
+          <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition">
+            + 등록
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 2. 목표 대비 달성률 및 이월 재고 자동 차감 요약 카드 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-800">품목별 목표 달성률 및 이월 재고 현황 (<span id="summaryMonthLabel">2026-11</span>)</h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            * <strong>전월 이월재고</strong> = 이전 달까지의 누적 생산량 - 누적 납품량 (음수일 경우 미납 잔량) | <strong>현재 가용재고</strong> = 전월 이월 + 당월 생산 - 당월 납품
+          </p>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-100 text-slate-600 border-y border-slate-200 text-xs">
+              <th class="py-2.5 px-3 font-bold">고객사</th>
+              <th class="py-2.5 px-3 font-bold">품명</th>
+              <th class="py-2.5 px-3 text-right font-bold text-indigo-700 bg-indigo-50/60">전월 이월재고</th>
+              <th class="py-2.5 px-3 text-right font-bold">당월 목표</th>
+              <th class="py-2.5 px-3 text-right font-bold text-blue-700">당월 생산</th>
+              <th class="py-2.5 px-3 text-center font-bold w-40">생산 달성률</th>
+              <th class="py-2.5 px-3 text-right font-bold">검수 / 포장</th>
+              <th class="py-2.5 px-3 text-right font-bold text-emerald-700">당월 납품(차감)</th>
+              <th class="py-2.5 px-3 text-center font-bold w-36">목표 대비 납품률</th>
+              <th class="py-2.5 px-3 text-right font-bold text-amber-800 bg-amber-50/70">현재 잔여재고</th>
+            </tr>
+          </thead>
+          <tbody id="kpiTableBody" class="divide-y divide-slate-200"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. 탭 전환: 일자별 피벗 현황판 vs 상세 작업 로그 -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+        <div class="flex gap-2">
+          <button id="tabPivotBtn" onclick="switchTab('pivot')" class="px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-900 text-white transition">
+            일자별 진행현황 피벗표
+          </button>
+          <button id="tabLogBtn" onclick="switchTab('log')" class="px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+            실적 입력 내역 (수정/삭제)
+          </button>
+        </div>
+        <div class="text-xs text-slate-500" id="tableCountInfo"></div>
+      </div>
+
+      <!-- 피벗 뷰 -->
+      <div id="pivotView" class="overflow-x-auto">
+        <table class="pivot-table w-full text-xs border-collapse border border-slate-300">
+          <thead id="pivotHead" class="bg-slate-100 text-slate-700"></thead>
+          <tbody id="pivotBody" class="divide-y divide-slate-200"></tbody>
+        </table>
+      </div>
+
+      <!-- 상세 로그 뷰 -->
+      <div id="logView" class="hidden overflow-x-auto max-h-[500px]">
+        <table class="w-full text-sm text-left border-collapse">
+          <thead class="bg-slate-100 text-slate-600 text-xs sticky top-0">
+            <tr>
+              <th class="py-2 px-3">작업일</th>
+              <th class="py-2 px-3">고객사</th>
+              <th class="py-2 px-3">품명</th>
+              <th class="py-2 px-3">공정</th>
+              <th class="py-2 px-3 text-right">수량</th>
+              <th class="py-2 px-3">비고</th>
+              <th class="py-2 px-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="logBody" class="divide-y divide-slate-200"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // 1. 고객사-품명 마스터 기준정보 (엑셀 기준표 반영 및 띄어쓰기 정제)
+    const MASTER_PARTS = {
+      "MCM": ['1/4" COLLET', '5/16" COLLET', '3/8" COLLET', '3/16" COLLET', '0828 INBOBBIN', '187 TML', '250 TML', 'WIRE TYPE TML(IN)', '250 TML(벤딩)'],
+"ELIM": ['COMPARTMENT(R32)', 'INSULATOR(R32)', 'TOP INSULATOR(R32)', '회전방지대', '0.4t_COVER(초소형)', 'CATHOD(초소형)', 'ANODE(초소형)', '중형펀처판', 'CATHOD(R27)', 'COMPARTMENT(R27)', 'SEPARATOR(R27)', 'INSULATOR(R27)', 'TOP INSULATOR(R27)', 'MIDDLE INSULATOR', 'CAP TERMINAL_TCH-C', 'CAP TERMINAL_TCH-D', 'BA-6802K (-) TERMINAL', 'BA-6802K (+) TERMINAL'],
+"VOLTAIRA": ['AH PLATE', 'CHARGER MINUS', 'GND TERMINAL', 'VIN TERMINAL', 'MALE(YG_PE)', 'MALE(GSR)', 'GUIDE_TML', 'CAP (WGN)', 'FEMAIL TML (WGN)', 'BUSBAR', '14V TML', 'PLUS & MINUS', 'BATTERY MINUS', 'BATTERY RING TML', 'MALE TERMINAL SIGNAL', 'MALE TERMINAL POWER', 'MALE SHORT BAR', 'FEMALE SHORT BAR1', 'MALE TERMINAL POWER-2', 'FASTEN POWER TER', 'FASTEN SIGNAL TER', 'FEMALE SIGNAL TER', 'FEMALE POWER TER', 'FEMALE SHORT BAR2', 'MALE TERMINAL_BUSBAR-1', 'FASTON DOUBLE POWER', 'FASTON DOUBLE SIGNAL', 'HOOK RING TML'],
+"산일": ['R1040A BRKT', 'R1040A CASE'],
+"CKT": ['SM110 GUIDE', 'SM110 INSERT', 'SM110 INSERT CUTTING', 'SM110 GUIDE CUTTING'],
+"두산중공업": ['기타품목'],
+"화성테크": ['기타품목'],
+"YJMGAMES": ['기타품목']
+};
+const PROCESS_ORDER = ['1.목표', '2.생산', '3.후가공', '4.컷팅', '5.검수', '6.포장', '7.납품', '8.컷팅'];
+// 2. 초기 샘플 데이터 (전월 이월 검증을 위한 10월 누적분 + 11월 실제 데이터)
+const INITIAL_RECORDS = [
+// 2026년 10월 마감 기준 잔여(이월) 테스트용 데이터
+{ id: 1, date: '2026-10-30', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 3800000, note: '10월 누적생산' },
+{ id: 2, date: '2026-10-31', customer: 'MCM', part: '1/4" COLLET', process: '7.납품', qty: 3450000, note: '10월 누적납품(35만 이월)' },
+{ id: 3, date: '2026-10-30', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 680000, note: '10월 누적생산' },
+{ id: 4, date: '2026-10-31', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '7.납품', qty: 600000, note: '10월 누적납품(8만 이월)' },
+{ id: 5, date: '2026-10-30', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 150000, note: '10월 누적생산' },
+{ id: 6, date: '2026-10-31', customer: 'VOLTAIRA', part: 'AH PLATE', process: '7.납품', qty: 100000, note: '10월 누적납품(5만 이월)' },
+// 2026년 11월 목표 및 실적 (첨부 시트 하단 11월 데이터 반영)
+{ id: 101, date: '2026-11-02', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '1.목표', qty: 500000, note: '' },
+{ id: 102, date: '2026-11-02', customer: 'ELIM', part: 'INSULATOR(R32)', process: '1.목표', qty: 20000, note: '' },
+{ id: 103, date: '2026-11-02', customer: 'MCM', part: '1/4" COLLET', process: '1.목표', qty: 3500000, note: '' },
+{ id: 104, date: '2026-11-02', customer: 'MCM', part: '5/16" COLLET', process: '1.목표', qty: 400000, note: '' },
+{ id: 105, date: '2026-11-02', customer: 'MCM', part: '0828 INBOBBIN', process: '1.목표', qty: 500000, note: '' },
+{ id: 106, date: '2026-11-02', customer: 'MCM', part: '250 TML', process: '1.목표', qty: 300000, note: '' },
+{ id: 107, date: '2026-11-02', customer: 'VOLTAIRA', part: 'AH PLATE', process: '1.목표', qty: 200000, note: '' },
+{ id: 108, date: '2026-11-02', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 56420, note: '' },
+{ id: 109, date: '2026-11-02', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 172600, note: '' },
+{ id: 110, date: '2026-11-02', customer: 'MCM', part: '5/16" COLLET', process: '2.생산', qty: 90000, note: '' },
+{ id: 111, date: '2026-11-02', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 24483, note: '' },
+{ id: 112, date: '2026-11-03', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 20400, note: '' },
+{ id: 113, date: '2026-11-03', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 287700, note: '' },
+{ id: 114, date: '2026-11-03', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '5.검수', qty: 34500, note: '' },
+{ id: 115, date: '2026-11-03', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28220, note: '' },
+{ id: 116, date: '2026-11-04', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 20403, note: '' },
+{ id: 117, date: '2026-11-04', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '5.검수', qty: 26950, note: '' },
+{ id: 118, date: '2026-11-04', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28220, note: '' },
+{ id: 119, date: '2026-11-04', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 120000, note: '' },
+{ id: 120, date: '2026-11-05', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 56440, note: '' },
+{ id: 121, date: '2026-11-05', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '6.포장', qty: 65000, note: '' },
+{ id: 122, date: '2026-11-05', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '5.검수', qty: 33250, note: '' },
+{ id: 123, date: '2026-11-05', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 334700, note: '' },
+{ id: 124, date: '2026-11-06', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 65280, note: '' },
+{ id: 125, date: '2026-11-06', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28220, note: '' },
+{ id: 126, date: '2026-11-06', customer: 'ELIM', part: '0.4t_COVER(초소형)', process: '5.검수', qty: 9784, note: '' },
+{ id: 127, date: '2026-11-06', customer: 'ELIM', part: '0.4t_COVER(초소형)', process: '6.포장', qty: 9149, note: '' },
+{ id: 128, date: '2026-11-09', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28210, note: '' },
+{ id: 129, date: '2026-11-09', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '5.검수', qty: 23800, note: '' },
+{ id: 130, date: '2026-11-09', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '6.포장', qty: 60000, note: '' },
+{ id: 131, date: '2026-11-09', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 407100, note: '' },
+{ id: 132, date: '2026-11-09', customer: 'MCM', part: '5/16" COLLET', process: '2.생산', qty: 125300, note: '' },
+{ id: 133, date: '2026-11-10', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28220, note: '' },
+{ id: 134, date: '2026-11-10', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 28560, note: '' },
+{ id: 135, date: '2026-11-10', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '5.검수', qty: 26950, note: '' },
+{ id: 136, date: '2026-11-10', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '6.포장', qty: 50000, note: '' },
+{ id: 137, date: '2026-11-10', customer: 'MCM', part: '1/4" COLLET', process: '2.생산', qty: 160900, note: '' },
+{ id: 138, date: '2026-11-11', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 56510, note: '' },
+{ id: 139, date: '2026-11-11', customer: 'ELIM', part: 'INSULATOR(R32)', process: '2.생산', qty: 11881, note: '' },
+{ id: 140, date: '2026-11-12', customer: 'VOLTAIRA', part: 'AH PLATE', process: '2.생산', qty: 40800, note: '' },
+{ id: 141, date: '2026-11-12', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '2.생산', qty: 28250, note: '' },
+// 납품 차감 테스트 예시 (11월 12일 납품분)
+{ id: 142, date: '2026-11-12', customer: 'MCM', part: '1/4" COLLET', process: '7.납품', qty: 1200000, note: '1차 납품(이월분 우선차감)' },
+{ id: 143, date: '2026-11-12', customer: 'ELIM', part: 'COMPARTMENT(R32)', process: '7.납품', qty: 300000, note: '1차 납품' }
+];
+const STORAGE_KEY = 'mes_lite_records_v1';
+let records = JSON.parse(localStorage.getItem(STORAGE_KEY)) || INITIAL_RECORDS;
+// 품명 정규화 함수 (띄어쓰기 오타 방지)
+function normalizePartName(name) {
+return (name || '').trim().replace(/\s+(/g, '(');
+}
+function saveRecords() {
+localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+}
+// 초기화
+function init() {
+const inCustomer = document.getElementById('inCustomer');
+const filterCustomer = document.getElementById('filterCustomer');
+const inDate = document.getElementById('inDate');
+inDate.value = new Date().toISOString().slice(0, 10);
+Object.keys(MASTER_PARTS).forEach(cust => {
+inCustomer.add(new Option(cust, cust));
+filterCustomer.add(new Option(cust, cust));
+});
+updatePartDropdown();
+inCustomer.addEventListener('change', updatePartDropdown);
+document.getElementById('filterMonth').addEventListener('change', renderAll);
+document.getElementById('filterCustomer').addEventListener('change', renderAll);
+document.getElementById('entryForm').addEventListener('submit', handleAddRecord);
+renderAll();
+}
+function updatePartDropdown() {
+const cust = document.getElementById('inCustomer').value;
+const inPart = document.getElementById('inPart');
+inPart.innerHTML = '';
+(MASTER_PARTS[cust] || []).forEach(part => {
+inPart.add(new Option(part, part));
+});
+}
+function handleAddRecord(e) {
+e.preventDefault();
+const date = document.getElementById('inDate').value;
+const customer = document.getElementById('inCustomer').value;
+const part = normalizePartName(document.getElementById('inPart').value);
+const process = document.getElementById('inProcess').value;
+const qty = parseInt(document.getElementById('inQty').value, 10);
+const note = document.getElementById('inNote').value.trim();
+if (!date || !customer || !part || isNaN(qty) || qty <= 0) return;
+records.push({
+id: Date.now(),
+date,
+customer,
+part,
+process,
+qty,
+note
+});
+saveRecords();
+// 입력한 월로 조회 필터 자동 맞춤
+document.getElementById('filterMonth').value = date.slice(0, 7);
+document.getElementById('inQty').value = '';
+document.getElementById('inNote').value = '';
+document.getElementById('inQty').focus();
+renderAll();
+}
+function deleteRecord(id) {
+if (!confirm('이 실적 내역을 삭제하시겠습니까?')) return;
+records = records.filter(r => r.id !== id);
+saveRecords();
+renderAll();
+}
+function resetDemoData() {
+if (!confirm('모든 데이터를 초기 샘플 데이터로 되돌리시겠습니까?')) return;
+records = [...INITIAL_RECORDS];
+saveRecords();
+renderAll();
+}
+// 전체 렌더링
+function renderAll() {
+const targetMonth = document.getElementById('filterMonth').value; // YYYY-MM
+const targetCust = document.getElementById('filterCustomer').value;
+document.getElementById('summaryMonthLabel').textContent = targetMonth;
+renderKPITable(targetMonth, targetCust);
+renderPivotTable(targetMonth, targetCust);
+renderLogTable(targetMonth, targetCust);
+}
+// 핵심 로직: 목표 대비 달성률 & 전월 이월 재고 자동 차감 계산
+function renderKPITable(targetMonth, targetCust) {
+const tbody = document.getElementById('kpiTableBody');
+tbody.innerHTML = '';
+// 품목별 집계 맵 생성
+const summaryMap = {};
+records.forEach(r => {
+const normPart = normalizePartName(r.part);
+const cust = r.customer || '미지정';
+if (targetCust !== 'ALL' && cust !== targetCust) return;
+const rMonth = r.date.slice(0, 7);
+const key = ${cust}__${normPart};
+if (!summaryMap[key]) {
+summaryMap[key] = {
+customer: cust,
+part: normPart,
+prevProd: 0,
+prevDeliv: 0,
+goal: 0,
+prod: 0,
+inspect: 0,
+pack: 0,
+deliv: 0,
+hasCurrentActivity: false
+};
+}
+const item = summaryMap[key];
+// 1) 조회 월 이전 데이터 -> 이월 재고 산출용
+if (rMonth < targetMonth) {
+if (r.process === '2.생산') item.prevProd += r.qty;
+if (r.process === '7.납품') item.prevDeliv += r.qty;
+}
+// 2) 조회 당월 데이터
+else if (rMonth === targetMonth) {
+item.hasCurrentActivity = true;
+if (r.process === '1.목표') item.goal += r.qty;
+else if (r.process === '2.생산') item.prod += r.qty;
+else if (r.process === '5.검수') item.inspect += r.qty;
+else if (r.process === '6.포장') item.pack += r.qty;
+else if (r.process === '7.납품') item.deliv += r.qty;
+}
+});
+const items = Object.values(summaryMap)
+.filter(item => item.hasCurrentActivity || (item.prevProd - item.prevDeliv) !== 0)
+.sort((a, b) => a.customer.localeCompare(b.customer) || a.part.localeCompare(b.part));
+if (items.length === 0) {
+tbody.innerHTML = <tr><td colspan="10" class="py-8 text-center text-slate-400">해당 조건의 데이터가 없습니다. 상단에서 실적을 등록해 주세요.</td></tr>;
+return;
+}
+items.forEach(item => {
+// 전월 이월 재고 = 이전 달까지 누적 생산 - 누적 납품
+const carryoverStock = item.prevProd - item.prevDeliv;
+// 현재 잔여 재고 = 전월 이월 재고 + 당월 생산 - 당월 납품 (이월분 우선 자동 차감 구조)
+const currentStock = carryoverStock + item.prod - item.deliv;
+const prodRate = item.goal > 0 ? Math.round((item.prod / item.goal) * 1000) / 10 : 0;
+const delivRate = item.goal > 0 ? Math.round((item.deliv / item.goal) * 1000) / 10 : 0;
+const prodBarWidth = Math.min(prodRate, 100);
+const delivBarWidth = Math.min(delivRate, 100);
+const tr = document.createElement('tr');
+tr.className = 'hover:bg-slate-50 transition';
+tr.innerHTML = `
+${item.customer}
+${item.part}
+${carryoverStock.toLocaleString()}
+${item.goal.toLocaleString()}
+${item.prod.toLocaleString()}
+검 \({item.inspect.toLocaleString()} / 포 \){item.pack.toLocaleString()}
+${item.deliv.toLocaleString()}
+${currentStock.toLocaleString()}
+`;
+tbody.appendChild(tr);
+});
+}
+// 엑셀 스타일 일자별 피벗 테이블 렌더링
+function renderPivotTable(targetMonth, targetCust) {
+const filtered = records.filter(r => {
+const matchMonth = r.date.startsWith(targetMonth);
+const matchCust = targetCust === 'ALL' || r.customer === targetCust;
+return matchMonth && matchCust;
+});
+const dates = [...new Set(filtered.map(r => r.date))].sort();
+const thead = document.getElementById('pivotHead');
+const tbody = document.getElementById('pivotBody');
+if (dates.length === 0) {
+thead.innerHTML = '';
+tbody.innerHTML = <tr><td class="py-8 text-center text-slate-400">선택한 월에 입력된 일자별 실적이 없습니다.</td></tr>;
+return;
+}
+// 헤더 생성
+let headHTML = `
+품명 / 공정
+`;
+dates.forEach(d => {
+headHTML += <th class="border border-slate-300 py-2 px-2.5 text-right">${d.slice(5)}</th>;
+});
+headHTML += <th class="border border-slate-300 py-2 px-3 text-right bg-blue-50 text-blue-900 font-bold">진행현황 합계</th></tr>;
+thead.innerHTML = headHTML;
+// 품명 -> 공정별 그룹핑
+const tree = {};
+filtered.forEach(r => {
+const part = normalizePartName(r.part);
+if (!tree[part]) tree[part] = { totalByDate: {}, grandTotal: 0, processes: {} };
+if (!tree[part].processes[r.process]) tree[part].processes[r.process] = { byDate: {}, total: 0 };
+tree[part].totalByDate[r.date] = (tree[part].totalByDate[r.date] || 0) + r.qty;
+tree[part].grandTotal += r.qty;
+tree[part].processes[r.process].byDate[r.date] = (tree[part].processes[r.process].byDate[r.date] || 0) + r.qty;
+tree[part].processes[r.process].total += r.qty;
+});
+let bodyHTML = '';
+Object.keys(tree).sort().forEach(part => {
+const pData = tree[part];
+// 품명 요약 행
+bodyHTML += `
+${part}
+`;
+dates.forEach(d => {
+const val = pData.totalByDate[d];
+bodyHTML += <td class="border border-slate-300 py-1.5 px-2.5 text-right">${val ? val.toLocaleString() : ''}</td>;
+});
+bodyHTML += <td class="border border-slate-300 py-1.5 px-3 text-right bg-blue-50/70 text-blue-900">${pData.grandTotal.toLocaleString()}</td></tr>;
+// 하위 공정 행
+const sortedProcs = Object.keys(pData.processes).sort((a, b) => PROCESS_ORDER.indexOf(a) - PROCESS_ORDER.indexOf(b));
+sortedProcs.forEach(proc => {
+const procData = pData.processes[proc];
+bodyHTML += `
+${proc}
+`;
+dates.forEach(d => {
+const val = procData.byDate[d];
+bodyHTML += <td class="border border-slate-300 py-1.5 px-2.5 text-right text-slate-700">${val ? val.toLocaleString() : ''}</td>;
+});
+bodyHTML += <td class="border border-slate-300 py-1.5 px-3 text-right font-semibold bg-slate-50">${procData.total.toLocaleString()}</td></tr>;
+});
+});
+tbody.innerHTML = bodyHTML;
+}
+// 상세 로그 테이블 렌더링
+function renderLogTable(targetMonth, targetCust) {
+const tbody = document.getElementById('logBody');
+const filtered = records
+.filter(r => r.date.startsWith(targetMonth) && (targetCust === 'ALL' || r.customer === targetCust))
+.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+document.getElementById('tableCountInfo').textContent = 조회된 실적 건수: ${filtered.length}건;
+tbody.innerHTML = filtered.map(r => `
+${r.date}
+${r.customer}${normalizePartName(r.part)}${r.qty.toLocaleString()}${r.note || '-'}`).join('');
+}
+function switchTab(tab) {
+const isPivot = tab === 'pivot';
+document.getElementById('pivotView').classList.toggle('hidden', !isPivot);
+document.getElementById('logView').classList.toggle('hidden', isPivot);
+document.getElementById('tabPivotBtn').className = isPivot
+? 'px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-900 text-white transition'
+: 'px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition';
+document.getElementById('tabLogBtn').className = !isPivot
+? 'px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-900 text-white transition'
+: 'px-4 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition';
+}
+// CSV 내보내기 (엑셀 호환 UTF-8 BOM 포함)
+function exportCSV() {
+const header = ['고객사', '품명', '년도', '월', '작업일', '공정', '수량', '비고'];
+const rows = records.map(r => [
+r.customer,
+"${r.part.replace(/"/g, '""')}",
+r.date.slice(0, 4),
+parseInt(r.date.slice(5, 7), 10),
+r.date,
+r.process,
+r.qty,
+"${(r.note || '').replace(/"/g, '""')}"
+]);
+const csvContent = '\uFEFF' + [header.join(','), ...rows.map(e => e.join(','))].join('\n');
+const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = 생산실적현황_${new Date().toISOString().slice(0, 10)}.csv;
+a.click();
+}
+// 기존 엑셀 CSV 업로드 가져오기
+function importCSV(event) {
+const file = event.target.files[0];
+if (!file) return;
+const reader = new FileReader();
+reader.onload = function(e) {
+const lines = e.target.result.split(/\r?\n/);
+let importedCount = 0;
+lines.forEach(line => {
+// CSV 파싱 (큰따옴표 내 쉼표 처리)
+const cols = line.match(/(".?"|[^",\s]+)(?=\s,|\s*$)/g);
+if (!cols || cols.length < 7) return;
+const clean = cols.map(c => c.replace(/^"|"$/g, '').replace(/""/g, '"').trim());
+// 작업일 패턴(YYYY-MM-DD)이 있는 행만 추출
+const dateIdx = clean.findIndex(c => /^\d{4}-\d{2}-\d{2}$/.test(c));
+if (dateIdx >= 2 && clean[dateIdx + 1] && clean[dateIdx + 2]) {
+const customer = clean[dateIdx - 4] || '미지정';
+const part = normalizePartName(clean[dateIdx - 3]);
+const date = clean[dateIdx];
+const process = clean[dateIdx + 1];
+const qty = parseInt(clean[dateIdx + 2].replace(/,/g, ''), 10);
+const note = clean[dateIdx + 3] || '';
+if (!isNaN(qty) && qty > 0) {
+records.push({ id: Date.now() + Math.random(), date, customer, part, process, qty, note });
+importedCount++;
+}
+}
+});
+if (importedCount > 0) {
+saveRecords();
+renderAll();
+alert(${importedCount}건의 실적 데이터를 성공적으로 불러왔습니다.);
+} else {
+alert('불러올 수 있는 유효한 실적 데이터 행(작업일 YYYY-MM-DD 포함)을 찾지 못했습니다.');
+}
+};
+reader.readAsText(file, 'UTF-8');
+}
+init();
